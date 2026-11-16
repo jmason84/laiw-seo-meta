@@ -1,0 +1,733 @@
+{
+  "name": "LAIW — Branded Explainer Factory (2 Daily) — STAGING",
+  "nodes": [
+    {
+      "id": "ex-daily-07-15-mt",
+      "name": "Daily 07:15 MT",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        220
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 15 7 * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "ex-manual-qa-trigger",
+      "name": "Manual QA Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        200,
+        220
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "ex-configuration-and-safety-mode",
+      "name": "Configuration and Safety Mode",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        210,
+        220
+      ],
+      "parameters": {
+        "jsCode": "\n// Safe defaults: image_preview renders actual graphics but NEVER uploads assets or appends queue rows.\n// Production enabling requires an owner-reviewed visual, explicit toggle below, and activating this workflow.\n// Modes: image_preview | draft_write_enabled\nreturn [{json:{mode:'image_preview',maxPerDay:2,slotTimes:['10:00','15:00'],approvalRequired:true,timezone:'America/Denver',previewOnly:true}}];\n"
+      }
+    },
+    {
+      "id": "ex-read-existing-post-queue",
+      "name": "Read Existing Post Queue",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        420,
+        220
+      ],
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "https://docs.google.com/spreadsheets/d/1RaU9E4kKjYWo93HrbIpRg6gIVrMJAeQlO43wnzkYHAo/edit",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Queue",
+          "mode": "name"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "ex-select-two-published-articles",
+      "name": "Select Two Published Articles",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        630,
+        220
+      ],
+      "parameters": {
+        "jsCode": "\nconst cfg=$('Configuration and Safety Mode').first().json;\nconst rows=$input.all().map(i=>i.json);\nconst normal=s=>String(s||'').trim().replace(/\\/+$/,'').toLowerCase();\nconst fmt=new Intl.DateTimeFormat('en-US',{timeZone:'America/Denver',year:'numeric',month:'2-digit',day:'2-digit'});\nconst ps=Object.fromEntries(fmt.formatToParts(new Date()).map(p=>[p.type,p.value]));\nconst tomorrow=new Date(Date.UTC(Number(ps.year),Number(ps.month)-1,Number(ps.day)+1,12)).toISOString().slice(0,10);\nconst existing=rows.filter(r=>String(r.ContentTitle||'').startsWith('[Explainer]')&&!['Cancelled','Failed'].includes(String(r.Status||'')));\nconst scheduled=existing.filter(r=>String(r.ScheduledFor||'').startsWith(tomorrow));\nconst current=Math.min(2,scheduled.length);\nconst available=Math.max(0,cfg.maxPerDay-current);\nif(!available)return [];\nconst existingArticleLinks=new Set(existing.map(r=>normal(r.ArticleURL)).filter(Boolean));\nconst existingIds=new Set(existing.map(r=>String(r.QueueID||'')));\nconst eligible=rows.filter(r=>{\n const url=String(r.ArticleURL||'').trim();\n return r.QueueID&&!String(r.ContentTitle||'').startsWith('[Explainer]')\n &&String(r.ArticleStatus||'').trim()==='Published'\n &&/^https:\\/\\/launchaiworks\\.com\\/[a-z0-9][^\\s]*\\/?$/i.test(url)\n &&!url.includes('/wp-admin/')&&!existingArticleLinks.has(normal(url))\n &&['News','Tool','WorkingOn'].includes(String(r.ContentType||'').trim())\n &&!['Failed','Cancelled'].includes(String(r.Status||''));\n});\nconst weight=r=>({WorkingOn:2000,Tool:1000,News:0}[r.ContentType]||0)+Math.min(999,Number(String(r.QueueID||'').match(/^Q-(\\d+)$/)?.[1]||0));\n\nconst lanes=['WorkingOn','Tool','News'].map(kind=>eligible.filter(r=>r.ContentType===kind).sort((a,b)=>weight(b)-weight(a)));\nconst ordered=[];\nfor(let i=0;i<eligible.length;i++){\n let any=false;\n for(const lane of lanes)if(i<lane.length){ordered.push(lane[i]);any=true}\n if(!any)break;\n}\nconst chosen=[],urls=new Set();\nfor(const r of ordered){\n const url=normal(r.ArticleURL);if(urls.has(url))continue;urls.add(url);\n const slug=url.split('/').filter(Boolean).pop();\n const qid='EX-'+tomorrow.replace(/-/g,'')+'-'+String(r.QueueID).replace(/[^a-z0-9]/gi,'');\n if(existingIds.has(qid))continue;\n chosen.push({json:{_mode:cfg.mode,_available:available,_maxPerDay:cfg.maxPerDay,_targetDay:tomorrow,_articleUrl:String(r.ArticleURL).trim(),_slug:slug,_parentId:String(r.QueueID),_contentType:r.ContentType,_sourceUrl:String(r.SourceURL||r.ArticleURL),_headline:String(r.ContentTitle||'').replace(/^\\[[^\\]]+\\]\\s*/,''),_queueId:qid,_slotTimes:cfg.slotTimes,_brand:'Launch AI Works',_sourceStatus:r.Status}});\n if(chosen.length>=Math.min(12,available*4))break;\n}\nreturn chosen;\n"
+      }
+    },
+    {
+      "id": "ex-fetch-published-wordpress-article",
+      "name": "Fetch Published WordPress Article",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        840,
+        220
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://launchaiworks.com/wp-json/wp/v2/posts?slug=' + encodeURIComponent($json._slug) + '&_fields=id,slug,status,link,title,excerpt,content&per_page=1' }}",
+        "options": {
+          "timeout": 30000
+        }
+      }
+    },
+    {
+      "id": "ex-extract-public-article-evidence",
+      "name": "Extract Public Article Evidence",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1050,
+        220
+      ],
+      "parameters": {
+        "jsCode": "\nconst originals=$('Select Two Published Articles').all().map(i=>i.json);\nconst posts=$input.all().map(i=>i.json).flatMap(x=>Array.isArray(x)?x:[x]);\nconst decode=s=>String(s||'').replace(/&nbsp;|&#160;/g,' ').replace(/&amp;|&#38;/g,'&').replace(/&quot;|&#34;/g,'\"').replace(/&#8217;|&#039;|&rsquo;/g,\"'\").replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&#(\\d+);/g,(_,n)=>String.fromCodePoint(+n)).replace(/\\s+/g,' ').trim();\nconst clean=s=>decode(String(s||'').replace(/<script[\\s\\S]*?<\\/script>/gi,' ').replace(/<style[\\s\\S]*?<\\/style>/gi,' ').replace(/<[^>]*>/g,' '));\nconst out=[];\nfor(const p of posts){\n if(String(p.status)!=='publish'||!p.link)continue;\n const base=originals.find(x=>x._articleUrl.replace(/\\/+$/,'')===String(p.link).replace(/\\/+$/,''));if(!base)continue;\n let html=String(p.content?.rendered||p.content||'');\n const marker=html.search(/<article\\b[^>]*class=[\"'][^\"']*(?:lx-art|entry-content)/i);\n if(marker>=0){html=html.slice(marker);const close=html.indexOf('</article>');if(close>0)html=html.slice(0,close);}\n html=html.replace(/<script[\\s\\S]*?<\\/script>/gi,'').replace(/<style[\\s\\S]*?<\\/style>/gi,'');\n const h2re=/<h2\\b[^>]*>([\\s\\S]*?)<\\/h2>/gi,heads=[...html.matchAll(h2re)];\n const sections=[];\n for(let k=0;k<heads.length;k++){\n  const title=clean(heads[k][1]);if(!title||/takeaways|sources|about the author|your turn|frequently asked|related articles|get started/i.test(title))continue;\n  const before=(heads[k].index||0)+heads[k][0].length;\n  const until=k+1<heads.length?(heads[k+1].index||html.length):html.length;\n  const block=html.slice(before,until);\n  const p=block.match(/<p\\b[^>]*>([\\s\\S]*?)<\\/p>/i);\n  const summary=clean(p?.[1]||'');\n  if(summary.length>=36)sections.push({title:title.slice(0,110),summary:summary.slice(0,220)});\n }\n const body=clean(html).slice(0,9000);\n if(body.length<450||sections.length<3)continue;\n out.push({json:{...base,_wpPostId:p.id,_articleTitle:clean(p.title?.rendered||p.title||base._headline),_articleExcerpt:clean(p.excerpt?.rendered||p.excerpt||'').slice(0,200),_sections:sections.slice(0,7),_bodyLength:body.length}});\n}\nreturn out;\n"
+      }
+    },
+    {
+      "id": "ex-build-laiw-diagram-brief",
+      "name": "Build LAIW Diagram Brief",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1260,
+        220
+      ],
+      "parameters": {
+        "jsCode": "\nconst out=[];\nconst limit=$('Select Two Published Articles').first().json._available||2;\nconst trim=(s,n)=>{s=String(s||'').replace(/\\s+/g,' ').trim();if(s.length<=n)return s;let x=s.slice(0,n+1);return x.slice(0,x.lastIndexOf(' ')).replace(/[,:;\\s]+$/,'')||s.slice(0,n);};\n\nconst complete=(input,n)=>{\n const s=String(input||'').replace(/\\s+/g,' ').trim();\n if(!s)return '';\n const full=s.match(/^(.+?[.!?])(?:\\s|$)/);\n const sentence=full?full[1]:s;\n if(sentence.length<=n)return sentence;\n const candidates=[' — ',': ','; ', ', ',' and ',' but ',' with ',' while '];\n let best='',bestIx=Infinity;\n for(const delimiter of candidates){\n  const ix=sentence.indexOf(delimiter);\n  if(ix>=52&&ix<=n&&ix<bestIx){best=sentence.slice(0,ix);bestIx=ix;}\n }\n if(best)return best.replace(/[,:;\\s-]+$/,'')+'.';\n const boundary=sentence.slice(0,n-1).lastIndexOf(' ');\n if(boundary>=40)return sentence.slice(0,boundary).replace(/[,:;\\s-]+$/,'')+'…';\n return sentence.slice(0,n-1).replace(/[,:;\\s-]+$/,'')+'…';\n};\n\nconst avoid=/\\b(?:homelab|credential|secret|password|API.?key|private IP|internal subnet|VM\\d{2,}|10\\.\\d+\\.\\d+|192\\.168\\.)\\b/i;\nfor(const a of $input.all().map(i=>i.json)){\n if(out.length>=limit)break;\n if(!Array.isArray(a._sections)||a._sections.length<3)continue;\n const safe=a._sections.filter(s=>!avoid.test(s.summary)&&!avoid.test(s.title));\n if(safe.length<3)continue;\n const stages=safe.slice(0,4).map((s,i)=>({\n  number:String(i+1).padStart(2,'0'),\n  title:trim(s.title,54).toUpperCase(),\n  description:/\\b(?:never|guaranteed|always|no .*ever)\\b/i.test(s.summary)?'The article examines this feature and its implications for privacy and reliability.':complete(s.summary,120)\n }));\n if(stages.length<3)continue;\n const title=trim(a._articleTitle,118);\n const styleFamilies=['systems map','editorial knowledge cards','architectural flow','practical briefing'];\n const family=styleFamilies[(Array.from(a._articleUrl).reduce((n,c)=>n+c.charCodeAt(0),0)%styleFamilies.length)];\n const design={\n  width:1080,height:1350,brand:'LAUNCH AI WORKS',\n  headline:title,eyebrow:'INSIGHTS / REAL WORKFLOW',\n  subhead:/\\b(?:never|guaranteed|always|without sending any|no .*ever)\\b/i.test(a._articleExcerpt||'')?'A practical look at this tool, its workflow, and the questions worth asking.':complete(a._articleExcerpt||'An article explained through the practical ideas it covers.',125),\n  steps:stages,look:family,footer:'LAUNCHAIWORKS.COM'\n };\n const fb='One useful article, turned into a visual explainer.\\n\\n'+title+'\\n\\nThis diagram breaks down '+stages.map(s=>s.title.toLowerCase()).join(' • ')+'.\\n\\nWe explore practical AI systems and automation at Launch AI Works. What would you want to understand or automate first?\\n\\n👉 https://launchaiworks.com\\n🔗 Read more: '+a._articleUrl;\n let x='Visual explainer: '+trim(title,76)+'. '+stages.slice(0,2).map(s=>s.title.toLowerCase()).join(' → ')+'. 👉 https://launchaiworks.com '+a._articleUrl;\n const weighted=s=>s.replace(/https?:\\/\\/\\S+/g,'x'.repeat(23)).length;\n if(weighted(x)>270)x='Visual explainer: '+trim(title,68)+'. 👉 https://launchaiworks.com '+a._articleUrl;\n if(weighted(x)>280)continue;\n out.push({json:{...a,_design:design,_steps:stages,_copyFacebook:fb,_copyX:x,_renderTemplate:family}});\n}\nreturn out;\n"
+      }
+    },
+    {
+      "id": "ex-build-exact-laiw-html",
+      "name": "Build Exact Branded HTML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1470,
+        220
+      ],
+      "parameters": {
+        "jsCode": "\nconst esc=s=>String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;').replace(/'/g,'&#39;');\nconst icons=[\n'<svg viewBox=\"0 0 64 64\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"3.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"12\" y=\"13\" width=\"40\" height=\"38\" rx=\"8\"/><path d=\"M21 28h22M21 37h14\"/><circle cx=\"47\" cy=\"46\" r=\"9\" fill=\"#a57bff\" stroke=\"#ecedff\"/><path d=\"M43 46l3 3 5-6\" stroke=\"#fff\"/></svg>',\n'<svg viewBox=\"0 0 64 64\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"3.5\" stroke-linecap=\"round\"><circle cx=\"31\" cy=\"31\" r=\"21\"/><circle cx=\"31\" cy=\"31\" r=\"10\"/><path d=\"M31 3v12M31 47v14M3 31h12M47 31h14\"/></svg>',\n'<svg viewBox=\"0 0 64 64\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"3.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"7\" y=\"13\" width=\"50\" height=\"38\" rx=\"6\"/><path d=\"M7 23h50M17 36h12M17 43h21\"/><circle cx=\"45\" cy=\"37\" r=\"7\" fill=\"#5b8cff\" stroke=\"none\"/></svg>',\n'<svg viewBox=\"0 0 64 64\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"3.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M10 51V37h11v14M27 51V25h11v26M44 51V13h11v38\"/><path d=\"M10 28l14-11 13 4 18-15\"/></svg>'\n];\nconst css=[\n'*{box-sizing:border-box}',\n'html,body{width:1080px;height:1350px;margin:0;overflow:hidden;background:#060818;color:#eef0fa;font-family:Arial,\"Helvetica Neue\",sans-serif}',\n'.canvas{position:relative;width:1080px;height:1350px;padding:54px 58px 34px;background:radial-gradient(ellipse 570px 460px at 100% 8%,rgba(67,89,242,.23),transparent 68%),radial-gradient(ellipse 630px 360px at -10% 98%,rgba(126,54,237,.20),transparent 72%),linear-gradient(130deg,#050817 0%,#090f2c 52%,#070819 100%);overflow:hidden}',\n'.grid{position:absolute;inset:0;opacity:.19;background-image:linear-gradient(rgba(142,167,255,.10) 1px,transparent 1px),linear-gradient(90deg,rgba(142,167,255,.10) 1px,transparent 1px);background-size:56px 56px;mask-image:linear-gradient(#000,transparent 66%);pointer-events:none}',\n'.topline{position:absolute;top:0;left:0;right:0;height:7px;background:linear-gradient(90deg,#4b8fff,#7766ff,#b288ff)}',\n'.glow{position:absolute;left:600px;top:130px;width:420px;height:420px;background:radial-gradient(circle,rgba(78,106,255,.20),transparent 67%);filter:blur(12px)}',\n'.header{position:relative;display:flex;justify-content:space-between;align-items:center;padding-bottom:27px;border-bottom:1px solid rgba(156,183,255,.38);height:76px}',\n'.brand{display:flex;align-items:center;gap:16px;font-size:22px;letter-spacing:2px;font-weight:800}',\n'.diamond{width:23px;height:23px;transform:rotate(45deg);border:6px solid #9287ff;border-radius:3px}',\n'.meta{font-size:15px;letter-spacing:3px;font-weight:700;color:#b3c5fa}',\n'.hero{height:337px;position:relative;display:flex;align-items:stretch;gap:12px;padding-top:30px}',\n'.hero-left{width:625px;min-width:625px;position:relative;z-index:2}',\n'.eyebrow{font-size:16px;font-weight:800;letter-spacing:3px;color:#94b9ff;text-transform:uppercase}',\n'.eyebrow:before{content:\"\";display:inline-block;width:23px;height:3px;margin:0 13px 5px 0;background:linear-gradient(90deg,#5b8cff,#b486ff)}',\n'.headline{font-size:52px;letter-spacing:-1.9px;line-height:1.06;font-weight:900;margin:20px 0 20px;color:#f7f8ff;max-height:190px;overflow:hidden}',\n'.subhead{font-size:21px;line-height:1.42;color:#b7c5e8;max-width:570px;max-height:78px;overflow:hidden}',\n'.art{position:relative;flex:1;height:285px;margin-top:9px}',\n'.orb{position:absolute;left:25px;top:16px;width:265px;height:240px;border:1px solid rgba(80,140,255,.38);border-radius:50%;transform:rotate(-24deg);box-shadow:0 0 65px rgba(94,91,238,.22)}',\n'.doc{position:absolute;left:66px;top:31px;width:179px;height:203px;border-radius:19px;background:linear-gradient(148deg,#b8c7ff 0%,#6d89e9 25%,#2a3877 100%);transform:rotate(10deg);box-shadow:0 21px 47px rgba(45,75,221,.4),0 0 45px rgba(102,107,255,.48);border:3px solid #ccd6ff;padding:21px}',\n'.paperbar{height:11px;background:#e5eaff;border-radius:10px;opacity:.9;margin-bottom:12px;width:96%}',\n'.paperbar.small{width:68%;height:8px;opacity:.62}',\n'.pic{height:80px;border-radius:11px;background:linear-gradient(135deg,#233f9b,#7c73e8);margin:7px 0 12px;display:flex;align-items:center;justify-content:center;font-size:54px;color:#d9e1ff}',\n'.badge-check{position:absolute;left:200px;top:10px;width:55px;height:55px;border-radius:50%;background:linear-gradient(135deg,#72b9ff,#754cff);border:3px solid #e2ecff;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:900;font-size:33px;box-shadow:0 5px 28px rgba(106,135,255,.65)}',\n'.mini{position:absolute;border:2px solid #819eff;border-radius:12px;background:#0d1744;color:#cce0ff;display:flex;align-items:center;justify-content:center;box-shadow:0 10px 28px rgba(84,95,221,.32);font-size:26px}',\n'.mini.a{left:0;top:172px;width:82px;height:68px}.mini.b{left:229px;top:159px;width:82px;height:68px}',\n'.section{display:flex;align-items:center;gap:20px;color:#9fbaff;font-size:18px;letter-spacing:2px;font-weight:800;height:48px}',\n'.section i{flex:1;height:2px;display:block;background:linear-gradient(90deg,#6d88ff,#b881ff,transparent);box-shadow:0 0 15px rgba(143,105,255,.6)}',\n'.cards{display:flex;flex-direction:column;gap:15px;margin-top:16px}',\n'.card{height:137px;border:1px solid rgba(116,152,255,.61);position:relative;display:flex;align-items:center;padding:16px 24px;border-radius:19px;background:linear-gradient(110deg,rgba(29,43,103,.87),rgba(11,19,53,.93));box-shadow:inset 0 0 26px rgba(71,95,194,.1),0 8px 28px rgba(2,3,14,.32);overflow:hidden}',\n'.card.purple{border-color:rgba(173,123,255,.73);background:linear-gradient(111deg,rgba(57,41,118,.84),rgba(19,19,57,.91))}',\n'.card:before{content:\"\";position:absolute;left:0;top:0;bottom:0;width:8px;background:linear-gradient(180deg,#53b8ff,#6e64ff)}',\n'.card.purple:before{background:linear-gradient(180deg,#a77bff,#7851ff)}',\n'.num{width:62px;height:62px;border-radius:50%;border:2px solid #708fff;background:#131e4a;display:flex;align-items:center;justify-content:center;flex:none;font-size:23px;font-weight:800;color:#e4eaff}',\n'.iconbox{width:87px;height:87px;margin:0 21px;flex:none;border-radius:17px;background:radial-gradient(circle at 20% 20%,rgba(131,152,255,.45),rgba(33,45,98,.55));display:flex;align-items:center;justify-content:center;color:#b6cbff;border:1px solid rgba(144,167,255,.29)}',\n'.iconbox svg{width:56px;height:56px;filter:drop-shadow(0 0 7px rgba(110,136,255,.7))}',\n'.cut{height:83px;width:2px;background:linear-gradient(180deg,transparent,#7b9bea,transparent);margin-right:22px;flex:none}',\n'.content{flex:1;min-width:0}',\n'.title{font-size:25px;line-height:1.16;font-weight:900;letter-spacing:-.18px;color:#f8f9ff;margin-bottom:11px}',\n'.detail{font-size:17px;line-height:1.34;color:#c3cbed;max-height:52px;overflow:hidden}',\n'.rightcheck{margin-left:16px;font-size:21px;color:#b9d4ff;border:2px solid #759ffc;border-radius:50%;width:37px;height:37px;display:flex;align-items:center;justify-content:center;flex:none}',\n'.foot{height:175px;position:relative;margin-top:30px;padding:29px 4px 0;border-top:1px solid rgba(133,165,255,.49)}',\n'.claim{font-size:24px;font-weight:900;letter-spacing:.3px;color:#f9faff}',\n'.promise{font-size:22px;font-weight:900;margin-top:7px;color:#ab90ff}',\n'.footbottom{display:flex;justify-content:space-between;align-items:center;margin-top:31px;font-size:17px;font-weight:800;letter-spacing:2px;color:#c7d3fa}',\n'.footbottom b{color:#fff;letter-spacing:1px;font-size:20px}',\n'.fstars{position:absolute;right:3px;top:35px;font-size:28px;letter-spacing:5px;color:#87a8ff;opacity:.8}',\n].join('');\nconst out=[];\nfor(const item of $input.all()){\n const x=item.json,d=x._design||{};\n if(!Array.isArray(d.steps)||d.steps.length<3||d.steps.length>4)continue;\n const headingSize=d.headline.length>105?31:d.headline.length>84?35:d.headline.length>67?39:d.headline.length>52?44:52;\n const cards=d.steps.map((s,i)=>'<div class=\"card '+(i%2?'purple':'')+'\"><div class=\"num\">'+esc(s.number)+'</div><div class=\"iconbox\">'+icons[i%icons.length]+'</div><div class=\"cut\"></div><div class=\"content\"><div class=\"title\">'+esc(s.title)+'</div><div class=\"detail\">'+esc(s.description)+'</div></div><div class=\"rightcheck\">✓</div></div>').join('');\n const html='<!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=1080,initial-scale=1\"><style>'+css+'</style></head><body><main class=\"canvas\"><div class=\"topline\"></div><div class=\"grid\"></div><div class=\"glow\"></div><header class=\"header\"><div class=\"brand\"><div class=\"diamond\"></div>LAUNCH AI WORKS</div><div class=\"meta\">FIELD NOTES / AI</div></header><section class=\"hero\"><div class=\"hero-left\"><div class=\"eyebrow\">ARTICLE-DRIVEN CONTENT</div><h1 class=\"headline\" style=\"font-size:'+headingSize+'px\">'+esc(d.headline)+'</h1><p class=\"subhead\">'+esc(d.subhead)+'</p></div><div class=\"art\"><div class=\"orb\"></div><div class=\"doc\"><div class=\"paperbar\"></div><div class=\"paperbar small\"></div><div class=\"pic\">✦</div><div class=\"paperbar\"></div><div class=\"paperbar small\"></div></div><div class=\"badge-check\">✓</div><div class=\"mini a\">✦</div><div class=\"mini b\">↗</div></div></section><div class=\"section\">THE PRACTICAL BREAKDOWN<i></i></div><section class=\"cards\">'+cards+'</section><footer class=\"foot\"><div class=\"claim\">ONE ARTICLE. ONE CLEARER IDEA.</div><div class=\"promise\">PRACTICAL INSIGHTS, BUILT FOR ACTION.</div><div class=\"fstars\">· · ·</div><div class=\"footbottom\"><span>READ THE FULL STORY →</span><b>LAUNCHAIWORKS.COM</b></div></footer></main></body></html>';\n const file=await this.helpers.prepareBinaryData(Buffer.from(html,'utf8'),'index.html','text/html');\n out.push({json:{_queueId:x._queueId,_htmlLength:html.length,_mode:x._mode,width:1080,height:1350,imageFormat:'png'},binary:{data:file}});\n}\nreturn out;\n"
+      }
+    },
+    {
+      "id": "ex-render-image-with-gotenberg",
+      "name": "Render Image with Existing Gotenberg",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1680,
+        220
+      ],
+      "parameters": {
+        "bodyParameters": {
+          "parameters": [
+            {
+              "inputDataFieldName": "data",
+              "name": "files",
+              "parameterType": "formBinaryData"
+            },
+            {
+              "name": "width",
+              "value": "={{ $json.width }}"
+            },
+            {
+              "name": "height",
+              "value": "={{ $json.height }}"
+            },
+            {
+              "name": "format",
+              "value": "={{ $json.imageFormat }}"
+            },
+            {
+              "name": "waitDelay",
+              "value": "1500ms"
+            }
+          ]
+        },
+        "contentType": "multipart-form-data",
+        "method": "POST",
+        "options": {
+          "response": {
+            "response": {
+              "outputPropertyName": "image",
+              "responseFormat": "file"
+            }
+          },
+          "timeout": 90000
+        },
+        "sendBody": true,
+        "url": "http://gotenberg:3000/forms/chromium/screenshot/html"
+      }
+    },
+    {
+      "id": "ex-package-branded-png",
+      "name": "Package Branded PNG",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1890,
+        220
+      ],
+      "parameters": {
+        "jsCode": "\nconst src=$('Build Exact Branded HTML').all().map(i=>i.json),out=[];\nfor(let i=0;i<$input.all().length;i++){\n const v=$input.all()[i];if(!v.binary?.image)continue;\n const bytes=await this.helpers.getBinaryDataBuffer(i,'image');\n if(bytes.length<30000||!bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])))continue;\n const w=bytes.readUInt32BE(16),h=bytes.readUInt32BE(20);\n out.push({json:{success:true,format:'png',width:w,height:h,sizeBytes:bytes.length,base64:bytes.toString('base64')}});\n}\nreturn out;\n"
+      }
+    },
+    {
+      "id": "ex-verify-rendered-png",
+      "name": "Verify Rendered PNG",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2100,
+        220
+      ],
+      "parameters": {
+        "jsCode": "\nconst plans=$('Build LAIW Diagram Brief').all().map(i=>i.json);\nconst received=$input.all().map(i=>i.json),out=[];\nfor(let i=0;i<plans.length;i++){\n const resp=received[i]||{},plan=plans[i];if(resp.error||resp.success!==true||typeof resp.base64!=='string')continue;\n const b64=resp.base64;\n if(!/^[A-Za-z0-9+/=\\s]+$/.test(b64)||b64.length<25000)continue;\n let bytes;try{bytes=Buffer.from(b64,'base64');}catch(e){continue}\n const png=bytes.length>100000&&bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]));\n if(!png)continue;\n const w=bytes.readUInt32BE(16),h=bytes.readUInt32BE(20);\n if(w!==1080||h!==1350||bytes.length>12000000)continue;\n out.push({json:{...plan,imgBase64:b64,imgMime:'image/png',_renderBytes:bytes.length,_renderWidth:w,_renderHeight:h,_verified:true}});\n}\nreturn out;\n"
+      }
+    },
+    {
+      "id": "ex-convert-approved-size-base64-to-png",
+      "name": "Convert Approved-Size Base64 to PNG",
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        2310,
+        220
+      ],
+      "parameters": {
+        "operation": "toBinary",
+        "sourceProperty": "imgBase64",
+        "binaryPropertyName": "data",
+        "options": {
+          "fileName": "={{ 'laiw-explainer-'+$json._queueId+'.png' }}",
+          "mimeType": "image/png",
+          "dataIsBase64": true
+        }
+      }
+    },
+    {
+      "id": "ex-remove-base64-and-check-binary",
+      "name": "Remove Base64 and Check Binary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2520,
+        220
+      ],
+      "parameters": {
+        "jsCode": "\nconst source=$('Verify Rendered PNG').all().map(i=>i.json);\nconst out=[];\nfor(const item of $input.all()){\n const f=item.binary?.data?.fileName||'';\n const p=source.find(s=>f.includes(s._queueId));\n if(!p||!item.binary?.data||p._verified!==true||p._renderWidth!==1080||p._renderHeight!==1350)continue;\n const j={...p};delete j.imgBase64;\n out.push({json:j,binary:item.binary});\n}\nreturn out;\n"
+      }
+    },
+    {
+      "id": "ex-hard-preview-gate-no-writes-unless-enabled",
+      "name": "Hard Preview Gate - No Writes Unless Enabled",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2730,
+        220
+      ],
+      "parameters": {
+        "jsCode": "\nconst out=[];\nfor(const item of $input.all()){\n if(item.json._mode!=='draft_write_enabled')continue;\n out.push(item);\n}\nreturn out;\n"
+      }
+    },
+    {
+      "id": "ex-single-before_upload",
+      "name": "Collapse Preview Assets to Single Queue Read",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2940,
+        220
+      ],
+      "parameters": {
+        "jsCode": "const n=$input.all().length;return n>0?[{json:{phase:'before_upload',batchCount:n}}]:[];"
+      }
+    },
+    {
+      "id": "ex-read-queue-before-upload",
+      "name": "Read Queue Before Upload",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        3150,
+        220
+      ],
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "https://docs.google.com/spreadsheets/d/1RaU9E4kKjYWo93HrbIpRg6gIVrMJAeQlO43wnzkYHAo/edit",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Queue",
+          "mode": "name"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "ex-fresh-queue-safety-prepare-upload",
+      "name": "Fresh Queue Safety - Prepare Upload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3360,
+        220
+      ],
+      "parameters": {
+        "jsCode": "\nconst available=$('Remove Base64 and Check Binary').all();\nconst now=$input.all().map(i=>i.json);\nconst urls=new Set(now.filter(x=>String(x.ContentTitle||'').startsWith('[Explainer]')).map(x=>String(x.ArticleURL||'').replace(/\\/+$/,'')));\nconst ids=new Set(now.map(x=>String(x.QueueID||'')));\nconst key=available[0]?.json._targetDay;\n\nconst existingToday=now.filter(x=>String(x.ContentTitle||'').startsWith('[Explainer]')&&String(x.ScheduledFor||'').startsWith(key)&&!['Failed','Cancelled'].includes(String(x.Status||'')));\nlet occupied=existingToday.length;\nconst usedTimes=new Set(existingToday.map(x=>String(x.ScheduledFor||'').slice(11,16)));\n\nconst out=[];\nfor(const item of available){\n const x=item.json;\n if(x._mode!=='draft_write_enabled'||!item.binary?.data)continue;\n if(occupied>=2||ids.has(x._queueId)||urls.has(x._articleUrl.replace(/\\/+$/,'')))continue;\n urls.add(x._articleUrl.replace(/\\/+$/,''));ids.add(x._queueId);\n \nconst free=x._slotTimes.find(t=>!usedTimes.has(t));\n if(!free)continue;\n const scheduled=x._targetDay+' '+free;\n usedTimes.add(free);occupied++;\n\n out.push({json:{...x,_scheduledFor:scheduled,_fileName:'laiw-explainer-'+x._queueId+'.png'},binary:item.binary});\n}\nreturn out;\n"
+      }
+    },
+    {
+      "id": "ex-upload-preview-approved-png-to-drive",
+      "name": "Upload Preview-Approved PNG to Drive",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        3570,
+        220
+      ],
+      "parameters": {
+        "resource": "file",
+        "operation": "upload",
+        "inputDataFieldName": "data",
+        "folderId": {
+          "__rl": true,
+          "value": "1gneOf9D5IYTvuEqKulq3-wBreMQOT1xF",
+          "mode": "id"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "ex-shape-draft-rows-from-drive-upload",
+      "name": "Shape Draft Rows from Drive Upload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3780,
+        220
+      ],
+      "parameters": {
+        "jsCode": "\nconst files=$input.all().map(i=>i.json);\nconst plans=$('Fresh Queue Safety - Prepare Upload').all().map(i=>i.json);\nconst out=[];\nfor(const f of files){\n if(!f.id||!f.name)continue;\n const p=plans.find(x=>f.name.includes(x._queueId)||f.name.includes(x._fileName));\n if(!p)continue;\n out.push({json:{\n QueueID:p._queueId,\n ContentTitle:'[Explainer] '+p._articleTitle.slice(0,130),\n CopyFacebook:p._copyFacebook,\n CopyX:p._copyX,\n CopyYouTube:'',\n MediaDriveURL:'https://drive.google.com/uc?export=download&id='+f.id,\n MediaType:'image',Platforms:'FB,X',\n ScheduledFor:p._scheduledFor,\n Status:'Draft',\n FacebookURL:'',YouTubeURL:'',XURL:'',ErrorNotes:'',\n SourceURL:p._sourceUrl,\n ContentType:p._contentType,\n ArticleStatus:'Published',\n ArticleURL:p._articleUrl,\n ArticleNotes:'Branded explainer | Parent '+p._parentId+' | WordPress post '+p._wpPostId+' | '+p._renderTemplate+' | '+p._renderWidth+'x'+p._renderHeight+' | REVIEW EXACT IMAGE BEFORE APPROVAL'\n }});\n}\nreturn out;\n"
+      }
+    },
+    {
+      "id": "ex-single-before_append",
+      "name": "Collapse Uploaded Drafts to Single Queue Read",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3990,
+        220
+      ],
+      "parameters": {
+        "jsCode": "const n=$input.all().length;return n>0?[{json:{phase:'before_append',batchCount:n}}]:[];"
+      }
+    },
+    {
+      "id": "ex-read-queue-before-final-append",
+      "name": "Read Queue Before Final Append",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        4200,
+        220
+      ],
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "https://docs.google.com/spreadsheets/d/1RaU9E4kKjYWo93HrbIpRg6gIVrMJAeQlO43wnzkYHAo/edit",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Queue",
+          "mode": "name"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "ex-final-dedup-and-two-per-day",
+      "name": "Final Dedup and Two per Day",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4410,
+        220
+      ],
+      "parameters": {
+        "jsCode": "\nconst planned=$('Shape Draft Rows from Drive Upload').all().map(i=>i.json),current=$input.all().map(i=>i.json);\nconst ids=new Set(current.map(r=>String(r.QueueID||''))),articles=new Set(current.filter(r=>String(r.ContentTitle||'').startsWith('[Explainer]')).map(r=>String(r.ArticleURL||'').replace(/\\/+$/,'')));\nconst out=[],claimed=new Set();\nfor(const p of planned){\n const day=String(p.ScheduledFor||'').slice(0,10);\n let count=current.filter(r=>String(r.ContentTitle||'').startsWith('[Explainer]')&&String(r.ScheduledFor||'').startsWith(day)&&!['Failed','Cancelled'].includes(String(r.Status||''))).length+out.filter(x=>x.json.ScheduledFor.startsWith(day)).length;\n if(count>=2||ids.has(p.QueueID)||articles.has(String(p.ArticleURL).replace(/\\/+$/,''))||claimed.has(p.QueueID))continue;\n if(p.Status!=='Draft'||p.ArticleStatus!=='Published'||p.MediaType!=='image'||!p.MediaDriveURL.includes('drive.google.com/uc?export=download&id='))continue;\n if(!p.CopyFacebook.trimEnd().endsWith('🔗 Read more: '+p.ArticleURL)||!p.CopyX.trimEnd().endsWith(p.ArticleURL))continue;\n claimed.add(p.QueueID);out.push({json:p});\n}\nreturn out;\n"
+      }
+    },
+    {
+      "id": "ex-append-draft-to-laiw-queue",
+      "name": "Append DRAFT to LAIW Queue",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        4620,
+        220
+      ],
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "https://docs.google.com/spreadsheets/d/1RaU9E4kKjYWo93HrbIpRg6gIVrMJAeQlO43wnzkYHAo/edit",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Queue",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "matchingColumns": [
+            "QueueID"
+          ],
+          "value": {
+            "QueueID": "={{ $json.QueueID }}",
+            "ContentTitle": "={{ $json.ContentTitle }}",
+            "CopyFacebook": "={{ $json.CopyFacebook }}",
+            "CopyX": "={{ $json.CopyX }}",
+            "CopyYouTube": "={{ $json.CopyYouTube }}",
+            "MediaDriveURL": "={{ $json.MediaDriveURL }}",
+            "MediaType": "={{ $json.MediaType }}",
+            "Platforms": "={{ $json.Platforms }}",
+            "ScheduledFor": "={{ $json.ScheduledFor }}",
+            "Status": "={{ $json.Status }}",
+            "FacebookURL": "={{ $json.FacebookURL }}",
+            "YouTubeURL": "={{ $json.YouTubeURL }}",
+            "XURL": "={{ $json.XURL }}",
+            "ErrorNotes": "={{ $json.ErrorNotes }}",
+            "SourceURL": "={{ $json.SourceURL }}",
+            "ContentType": "={{ $json.ContentType }}",
+            "ArticleStatus": "={{ $json.ArticleStatus }}",
+            "ArticleURL": "={{ $json.ArticleURL }}",
+            "ArticleNotes": "={{ $json.ArticleNotes }}"
+          }
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "ex-design-and-safety-notes",
+      "name": "Design and Safety Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        300,
+        -440
+      ],
+      "parameters": {
+        "content": "LAIW — Branded Explainer Factory — inactive staging. Up to two new article-based 1080×1350 diagrams for next-day 10:00/15:00 Mountain. The exact visual layout is generated with deterministic HTML and icons + existing Gotenberg renderer (no public graphic generator webhook or paid creative-model call), and page/diagram text comes from a published WordPress article. PNG binary signature and dimensions must pass; preview mode does not upload or write to Queue. To enable owner-approved Draft creation, set Configuration and Safety Mode to draft_write_enabled and activate, only after real image review and downstream integration tests. Keep every new post Status Draft; current human Queue Approved gate + article-first social distributor remain unchanged.",
+        "width": 720,
+        "height": 480
+      }
+    }
+  ],
+  "connections": {
+    "Daily 07:15 MT": {
+      "main": [
+        [
+          {
+            "node": "Configuration and Safety Mode",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Configuration and Safety Mode": {
+      "main": [
+        [
+          {
+            "node": "Read Existing Post Queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Existing Post Queue": {
+      "main": [
+        [
+          {
+            "node": "Select Two Published Articles",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Select Two Published Articles": {
+      "main": [
+        [
+          {
+            "node": "Fetch Published WordPress Article",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Published WordPress Article": {
+      "main": [
+        [
+          {
+            "node": "Extract Public Article Evidence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Public Article Evidence": {
+      "main": [
+        [
+          {
+            "node": "Build LAIW Diagram Brief",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build LAIW Diagram Brief": {
+      "main": [
+        [
+          {
+            "node": "Build Exact Branded HTML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Exact Branded HTML": {
+      "main": [
+        [
+          {
+            "node": "Render Image with Existing Gotenberg",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Render Image with Existing Gotenberg": {
+      "main": [
+        [
+          {
+            "node": "Package Branded PNG",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Package Branded PNG": {
+      "main": [
+        [
+          {
+            "node": "Verify Rendered PNG",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Rendered PNG": {
+      "main": [
+        [
+          {
+            "node": "Convert Approved-Size Base64 to PNG",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert Approved-Size Base64 to PNG": {
+      "main": [
+        [
+          {
+            "node": "Remove Base64 and Check Binary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Remove Base64 and Check Binary": {
+      "main": [
+        [
+          {
+            "node": "Hard Preview Gate - No Writes Unless Enabled",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hard Preview Gate - No Writes Unless Enabled": {
+      "main": [
+        [
+          {
+            "node": "Collapse Preview Assets to Single Queue Read",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collapse Preview Assets to Single Queue Read": {
+      "main": [
+        [
+          {
+            "node": "Read Queue Before Upload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Queue Before Upload": {
+      "main": [
+        [
+          {
+            "node": "Fresh Queue Safety - Prepare Upload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fresh Queue Safety - Prepare Upload": {
+      "main": [
+        [
+          {
+            "node": "Upload Preview-Approved PNG to Drive",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload Preview-Approved PNG to Drive": {
+      "main": [
+        [
+          {
+            "node": "Shape Draft Rows from Drive Upload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Shape Draft Rows from Drive Upload": {
+      "main": [
+        [
+          {
+            "node": "Collapse Uploaded Drafts to Single Queue Read",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collapse Uploaded Drafts to Single Queue Read": {
+      "main": [
+        [
+          {
+            "node": "Read Queue Before Final Append",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Queue Before Final Append": {
+      "main": [
+        [
+          {
+            "node": "Final Dedup and Two per Day",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Final Dedup and Two per Day": {
+      "main": [
+        [
+          {
+            "node": "Append DRAFT to LAIW Queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual QA Trigger": {
+      "main": [
+        [
+          {
+            "node": "Configuration and Safety Mode",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "timezone": "America/Denver",
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "active": false,
+  "meta": {
+    "templateOnly": true,
+    "sourceWorkflowId": "qReb8vDEa8N2rUU6",
+    "exportedDate": "2026-11-16",
+    "credentialValuesRemoved": true,
+    "stagingMode": "image_preview",
+    "notes": "Reconnect Google Sheets + Google Drive credentials after import. Keep inactive; do not enable draft writes until image review and QA."
+  }
+}
