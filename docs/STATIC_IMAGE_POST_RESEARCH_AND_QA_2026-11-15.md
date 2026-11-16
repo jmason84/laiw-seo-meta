@@ -159,3 +159,16 @@ Run *controlled* creative experiments after staging and approval. Compare: (A) e
 **Recommended implementation sequence:** (1) design one 4-slide reference mock from a real LAIW article in sandbox, (2) validate schema and source IDs without paid generation, (3) render actual 1080×1350 assets with deterministic typography and exact byte QA, (4) owner approves a preview/manifest, (5) store privately and append a non-publishing review record, (6) only then plan an Instagram/FB adapter. Avoid introducing any production publishing changes during research or prototypes.
 
 **External source verification note:** n8n.io listings describe intended behavior, not audited deployment. The two GitHub JSON exports and the repo README were actually fetched/read. Live image/social workflows were inspected read-only. No new template was imported, rendered, published, or paid for.
+
+
+## Exact visual-reference links supplied by owner — 2026-11-16
+
+The following three screenshots/images were shared as *visual inspiration* for the already-documented concepts. They are image-proxy URLs supplied in the chat, **not confirmed canonical source pages or license grants**. Do not copy, modify, distribute, or build LAIW branded assets directly from third-party images without confirming rights; retrieve the creator's original portfolio/article when possible. Such proxy URLs may expire. Record the titles so they remain searchable.
+
+1. **Carousel inspiration.** AI Social Media Carousel Post Design — Behance. User-provided visual reference: https://images.openai.com/static-rsc-4/EbGGL83e-JnWRBIKsG1R9h51ngum30IEJNz1jaM3OfZLGMOL9I9bKtnMWR8U_fwiODInszBniCf29gUNtn5Ks74Z3OIT2etnHn6xouO_A1ENM3ktX9Faey0AYwCuloIGnHY2el68OIT3hBE8lbs-yQdYQFoz3uIrZi-cCNnERFs?purpose=inline
+
+2. **Diagram/explainer inspiration.** Green clouds: the sustainability of digital platforms — iO. User-provided visual reference: https://images.openai.com/static-rsc-4/3y-SuVn0kLP7cEQWIxBc6dXir9ziFz-aDksDb8lcCCkVGT9Rn6Pr6CAc-wcGf-HFf8E4XV0BbclMjbtC61O90w17Q8u1Mm9ercAyXYXaEL4kPot6PeVZGW6ICxMJZgEo3KDP0Vbi_Gb0h8VNBn5-4GeK9Iyxd72_ZVhihrHR4AQ?purpose=inline
+
+3. **Visual-review/creative-brief inspiration.** How to Brief a Designer for Social Media Content. User-provided visual reference: https://images.openai.com/static-rsc-4/8i0OZ3LFVDHmMyU2LWeKDlwXFxAFMkLty-vjDfaism4HaVKVhhh1yZnTjf5vHkZB7Gsu2_rs2nvBvR0XEpP6UuxNn1RuaWOOGtv6kh-3lBq3EoN-DYSieFOgubrDU6BFgeyb7Vw8xdxPrcCCGR37aJTCtlJj7g1VB_F7j9wpu44?purpose=inline
+
+The underlying three deliverables remain: **(1)** 3–5 coordinated slides sourced to a published LAIW article; **(2)** branded informative diagrams/explainers grounded in real workflows; **(3)** visual QA of actual rendered images, dimensions, source licenses, and duplicates before human approval.
